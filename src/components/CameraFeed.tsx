@@ -3,6 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Video, VideoOff, AlertTriangle, Camera, Play } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import * as tf from "@tensorflow/tfjs";
+import * as cocoSsd from "@tensorflow-models/coco-ssd";
 
 interface CameraFeedProps {
   isDetectionActive: boolean;
@@ -12,7 +14,6 @@ interface CameraFeedProps {
 
 const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: CameraFeedProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [cameraError, setCameraError] = useState<string>("");
   const [threatStatus, setThreatStatus] = useState<"safe" | "threat">("safe");
@@ -21,13 +22,11 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
   const [detectionBoxes, setDetectionBoxes] = useState<Array<{x: number, y: number, width: number, height: number, label: string}>>([]);
   const { toast } = useToast();
 
-  // Enhanced camera access with better error handling
   const startCamera = async () => {
     setIsLoading(true);
     setCameraError("");
     
     try {
-      // Check if getUserMedia is supported
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Camera not supported by this browser");
       }
@@ -43,19 +42,23 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
       
       setStream(mediaStream);
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-        
-        // Wait for video to load
-        videoRef.current.onloadedmetadata = () => {
-          videoRef.current?.play().catch(console.error);
+      const videoElement = videoRef.current;
+      if (videoElement) {
+        // Assign srcObject and wait for it to be loaded before playing
+        videoElement.srcObject = mediaStream; 
+        videoElement.onloadedmetadata = () => {
+          videoElement.play().catch(console.error);
           setIsLoading(false);
         };
-        
-        videoRef.current.onerror = () => {
+        videoElement.onerror = () => {
           setCameraError("Failed to load video stream");
           setIsLoading(false);
         };
+      } else {
+        console.error("Video element not found.");
+        stopCamera();
+        setCameraError("Video display element not found.");
+        setIsLoading(false);
       }
       
     } catch (error: any) {
@@ -94,70 +97,62 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
     setDetectionBoxes([]);
   };
 
-  // Enhanced AI detection with visual indicators
   useEffect(() => {
-    if (!isDetectionActive || !stream) {
-      setDetectionBoxes([]);
-      return;
-    }
+    let animationFrameId: number;
+    let model: cocoSsd.ObjectDetection | null = null;
+    
+    const loadModel = async () => {
+      try {
+        await tf.ready();
+        model = await cocoSsd.load();
+        console.log("Model loaded successfully.");
+      } catch (e) {
+        console.error("Failed to load model:", e);
+      }
+    };
 
-    const interval = setInterval(() => {
-      // Simulate object detection
-      const random = Math.random();
-      
-      if (random < 0.2) { // 20% chance of detection
-        const objects = [
-          { type: "knife", threat: true, label: "Knife Detected" },
-          { type: "scissors", threat: true, label: "Scissors Detected" },
-          { type: "blade", threat: true, label: "Sharp Blade" },
-          { type: "cutter", threat: true, label: "Box Cutter" },
-          { type: "person", threat: false, label: "Person" },
-          { type: "hand", threat: false, label: "Hand Movement" }
-        ];
+    const detectFrame = async () => {
+      if (videoRef.current && model && isDetectionActive && stream) {
+        const predictions = await model.detect(videoRef.current);
         
-        const detectedObj = objects[Math.floor(Math.random() * objects.length)];
+        const filteredPredictions = predictions.filter(p => p.score > 0.6);
         
-        // Create detection box
-        const box = {
-          x: Math.random() * 400 + 50,
-          y: Math.random() * 200 + 50,
-          width: 80 + Math.random() * 40,
-          height: 60 + Math.random() * 30,
-          label: detectedObj.label
-        };
+        const newDetectionBoxes = filteredPredictions.map(p => ({
+          x: p.bbox[0],
+          y: p.bbox[1],
+          width: p.bbox[2],
+          height: p.bbox[3],
+          label: p.class
+        }));
         
-        setDetectionBoxes([box]);
+        setDetectionBoxes(newDetectionBoxes);
         
-        if (detectedObj.threat) {
+        const threatDetected = newDetectionBoxes.find(box => box.label === "knife" || box.label === "scissors" || box.label === "gun");
+        if (threatDetected) {
           setThreatStatus("threat");
-          setDetectedObject(detectedObj.label);
-          onThreatDetected(detectedObj.label);
-          
-          toast({
-            title: "🚨 THREAT DETECTED",
-            description: `${detectedObj.label} identified in surveillance area`,
-            variant: "destructive",
-          });
-
-          // Auto-clear after 4 seconds
-          setTimeout(() => {
-            setThreatStatus("safe");
-            setDetectedObject("");
-            setDetectionBoxes([]);
-          }, 4000);
+          setDetectedObject(threatDetected.label);
+          onThreatDetected(threatDetected.label);
         } else {
-          // Clear non-threat detections quickly
-          setTimeout(() => {
-            setDetectionBoxes([]);
-          }, 1500);
+          setThreatStatus("safe");
+          setDetectedObject("");
         }
       }
-    }, 2000);
+      animationFrameId = requestAnimationFrame(detectFrame);
+    };
 
-    return () => clearInterval(interval);
-  }, [isDetectionActive, stream, onThreatDetected, toast]);
+    if (isDetectionActive && stream) {
+      loadModel().then(() => {
+        detectFrame();
+      });
+    }
 
-  // Initialize camera on component mount
+    return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
+    };
+  }, [isDetectionActive, stream, onThreatDetected]);
+
   useEffect(() => {
     startCamera();
     return () => stopCamera();
@@ -172,7 +167,6 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
 
   return (
     <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
-      {/* Camera Feed */}
       {stream && !cameraError ? (
         <>
           <video
@@ -182,8 +176,6 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
             muted
             className="w-full h-full object-cover"
           />
-          
-          {/* Detection Overlay Canvas */}
           <div className="absolute inset-0 pointer-events-none">
             {detectionBoxes.map((box, index) => (
               <div
@@ -218,11 +210,7 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
               <p className="text-sm text-muted-foreground text-center px-4 mb-4">
                 {cameraError}
               </p>
-              <Button 
-                onClick={startCamera} 
-                variant="outline" 
-                size="sm"
-              >
+              <Button onClick={startCamera} variant="outline" size="sm">
                 <Play className="w-4 h-4 mr-2" />
                 Try Again
               </Button>
@@ -242,7 +230,6 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
         </div>
       )}
 
-      {/* Threat Detection Alert */}
       {threatStatus === "threat" && detectedObject && (
         <div className="absolute top-4 left-4 right-4 z-10">
           <div className="bg-destructive/95 text-destructive-foreground px-4 py-3 rounded-lg border-2 border-destructive animate-pulse shadow-lg">
@@ -254,7 +241,6 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
         </div>
       )}
 
-      {/* Status Overlay */}
       <div className="absolute bottom-4 left-4 z-10">
         <Badge 
           variant={threatStatus === "safe" ? "default" : "destructive"}
@@ -264,7 +250,6 @@ const CameraFeed = ({ isDetectionActive, onToggleDetection, onThreatDetected }: 
         </Badge>
       </div>
 
-      {/* Detection Status & Info */}
       <div className="absolute top-4 right-4 z-10 flex flex-col items-end gap-2">
         <div className={`w-3 h-3 rounded-full shadow-md ${isDetectionActive && stream ? 'bg-success animate-pulse' : 'bg-muted-foreground'}`} />
         {isDetectionActive && stream && (
