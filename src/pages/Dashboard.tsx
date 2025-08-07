@@ -14,6 +14,8 @@ import {
   TrendingUp
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import CameraFeed from "@/components/CameraFeed";
+import OdishaCrimeNews from "@/components/OdishaCrimeNews";
 
 const Dashboard = () => {
   const [isDetectionActive, setIsDetectionActive] = useState(false);
@@ -28,40 +30,13 @@ const Dashboard = () => {
 
   const { toast } = useToast();
 
-  // Simulate threat detection
-  useEffect(() => {
-    if (!isDetectionActive) return;
-
-    const interval = setInterval(() => {
-      const random = Math.random();
-      if (random < 0.1) { // 10% chance of threat
-        const threats = ["Knife Detected", "Sharp Object", "Weapon"];
-        const threat = threats[Math.floor(Math.random() * threats.length)];
-        setThreatStatus("threat");
-        setDetectedObject(threat);
-        
-        toast({
-          title: "⚠️ THREAT DETECTED",
-          description: `${threat} identified in surveillance area`,
-          variant: "destructive",
-        });
-
-        setStats(prev => ({
-          ...prev,
-          threatsToday: prev.threatsToday + 1,
-          totalDetections: prev.totalDetections + 1
-        }));
-
-        // Auto-clear after 5 seconds
-        setTimeout(() => {
-          setThreatStatus("safe");
-          setDetectedObject("");
-        }, 5000);
-      }
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [isDetectionActive, toast]);
+  const handleThreatDetected = (threat: string) => {
+    setStats(prev => ({
+      ...prev,
+      threatsToday: prev.threatsToday + 1,
+      totalDetections: prev.totalDetections + 1
+    }));
+  };
 
   const toggleDetection = () => {
     setIsDetectionActive(!isDetectionActive);
@@ -153,38 +128,11 @@ const Dashboard = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="relative aspect-video bg-muted rounded-lg overflow-hidden">
-                {/* Simulated camera feed */}
-                <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-accent/10 flex items-center justify-center">
-                  {isDetectionActive ? (
-                    <Video className="w-16 h-16 text-primary animate-pulse" />
-                  ) : (
-                    <VideoOff className="w-16 h-16 text-muted-foreground" />
-                  )}
-                </div>
-
-                {/* Threat Detection Overlay */}
-                {threatStatus === "threat" && detectedObject && (
-                  <div className="absolute top-4 left-4 right-4">
-                    <div className="bg-destructive/90 text-destructive-foreground px-4 py-2 rounded-lg border-2 border-destructive animate-pulse">
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle className="w-5 h-5" />
-                        <span className="font-bold">THREAT DETECTED: {detectedObject}</span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Status Overlay */}
-                <div className="absolute bottom-4 left-4">
-                  <Badge 
-                    variant={threatStatus === "safe" ? "default" : "destructive"}
-                    className="px-3 py-1"
-                  >
-                    {threatStatus === "safe" ? "ALL CLEAR" : "THREAT DETECTED"}
-                  </Badge>
-                </div>
-              </div>
+              <CameraFeed 
+                isDetectionActive={isDetectionActive}
+                onToggleDetection={toggleDetection}
+                onThreatDetected={handleThreatDetected}
+              />
 
               <div className="flex gap-4 mt-4">
                 <Button
@@ -250,6 +198,9 @@ const Dashboard = () => {
             </CardContent>
           </Card>
         </div>
+
+        {/* Odisha Crime Details */}
+        <OdishaCrimeNews />
       </div>
     </div>
   );
